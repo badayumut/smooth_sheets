@@ -11,12 +11,12 @@ import 'viewport.dart';
 
 const _sheetTopInset = 12.0;
 const _minimizedSheetScale = 0.92;
-const _minimizedSheetCornerRadius = 12.0;
+const _minimizedSheetCornerRadius = 16.0;
 const _barrierColor = Color(0x18000000);
-const _transitionDuration = Duration(milliseconds: 300);
-const Cubic _outgoingTransitionCurve = Curves.easeIn;
-const Cubic _outgoingTransitionOverlayCurve = Curves.easeIn;
-const ThreePointCubic _incomingTransitionCurve = Curves.fastEaseInToSlowEaseOut;
+const _transitionDuration = Duration(milliseconds: 500);
+const Curve _outgoingTransitionCurve = Curves.easeOutQuad;
+const Curve _outgoingTransitionOverlayCurve = Curves.fastEaseInToSlowEaseOut;
+const Curve _incomingTransitionCurve = Curves.fastEaseInToSlowEaseOut;
 
 /// Animated version of [ClipRRect].
 ///
