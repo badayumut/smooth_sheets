@@ -577,16 +577,19 @@ abstract class _BaseCupertinoModalSheetRoute<T> extends PageRoute<T>
     }
 
     return (
-      BuildContext context,
-      Animation<double> animation,
-      Animation<double> secondaryAnimation,
-      bool allowSnapshotting,
-      Widget? child,
-    ) {
+        BuildContext context,
+        Animation<double> animation,
+        Animation<double> secondaryAnimation,
+        bool allowSnapshotting,
+        Widget? child,
+        ) {
       return _OutgoingTransition(
         animation: previousRouteEntry.outgoingTransitionController,
         endOffset: Offset(0, MediaQuery.viewPaddingOf(context).top),
-        overlayColor: overlayColor,
+        overlayColor: overlayColor ??
+            (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0x18ffffff)
+                : Colors.transparent),
         child: child!,
       );
     };
@@ -603,7 +606,10 @@ abstract class _BaseCupertinoModalSheetRoute<T> extends PageRoute<T>
       child: _OutgoingTransition(
         animation: _outgoingTransitionController,
         endOffset: const Offset(0, -1 * _sheetTopInset),
-        overlayColor: overlayColor,
+        overlayColor: overlayColor ??
+            (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0x18ffffff)
+                : Colors.transparent),
         child: _buildSheetInternal(context),
       ),
     );
