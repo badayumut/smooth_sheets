@@ -631,8 +631,8 @@ class _SheetDismissibleState extends State<_SheetDismissible>
 class SwipeDismissSensitivity {
   /// Creates a swipe-to-dismiss sensitivity configuration.
   const SwipeDismissSensitivity({
-    this.minFlingVelocityRatio = 2.0,
-    this.dismissalOffset = const SheetOffset(0.3),
+    this.minFlingVelocityRatio = 1.0,
+    this.dismissalOffset = const SheetOffset(1),
   });
 
   /// Minimum ratio of gesture velocity to viewport height required to
