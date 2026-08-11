@@ -11,12 +11,12 @@ import 'viewport.dart';
 
 const _sheetTopInset = 12.0;
 const _minimizedSheetScale = 0.92;
-const _minimizedSheetCornerRadius = 12.0;
+const _minimizedSheetCornerRadius = 16.0;
 const _barrierColor = Color(0x18000000);
-const _transitionDuration = Duration(milliseconds: 300);
-const Cubic _outgoingTransitionCurve = Curves.easeIn;
-const Cubic _outgoingTransitionOverlayCurve = Curves.easeIn;
-const ThreePointCubic _incomingTransitionCurve = Curves.fastEaseInToSlowEaseOut;
+const _transitionDuration = Duration(milliseconds: 500);
+const Curve _outgoingTransitionCurve = Curves.easeOutQuad;
+const Curve _outgoingTransitionOverlayCurve = Curves.fastEaseInToSlowEaseOut;
+const Curve _incomingTransitionCurve = Curves.fastEaseInToSlowEaseOut;
 
 /// Animated version of [ClipRRect].
 ///
@@ -314,18 +314,22 @@ class _OutgoingTransitionState extends State<_OutgoingTransition> {
       animation: _animation,
       offsetTween: Tween(begin: Offset.zero, end: widget.endOffset),
       scaleTween: Tween(begin: 1, end: _minimizedSheetScale),
-      child: _ClipRRectTransition(
-        radius: Tween(
-          begin: 0.0,
-          end: _minimizedSheetCornerRadius,
-        ).animate(_animation),
-        child: widget.overlayColor != null
-            ? _ToningOverlay(
-                animation: _animation,
-                color: widget.overlayColor!,
-                child: widget.child,
-              )
-            : widget.child,
+      child: RepaintBoundary(
+        child: _ClipRRectTransition(
+          radius: Tween(
+            begin: 0.0,
+            end: _minimizedSheetCornerRadius,
+          ).animate(_animation),
+          child: ClipRect(
+            child: widget.overlayColor != null
+                ? _ToningOverlay(
+              animation: _animation,
+              color: widget.overlayColor!,
+              child: widget.child,
+            )
+                : widget.child,
+          ),
+        ),
       ),
     );
   }
@@ -504,37 +508,12 @@ abstract class _BaseCupertinoModalSheetRoute<T> extends PageRoute<T>
     with ModalSheetRouteMixin<T> {
   _BaseCupertinoModalSheetRoute({super.settings});
 
-  /// {@template cupertino._BaseCupertinoModalSheetRoute.overlayColor}
-  /// The color of the overlay applied to the outgoing transition.
-  ///
-  /// This color is applied to the sheet when another sheet is being pushed,
-  /// especially useful when stacking multiple modal sheets in dark mode,
-  /// so that the user can distinguish between the stacked sheets.
-  ///
-  /// If `null`, the overlay color is not applied at all.
-  /// {@endtemplate}
   Color? get overlayColor;
 
-  /// The animation controller that drives the outgoing transition
-  /// of this route.
-  ///
-  /// See [_OutgoingTransition] for more details.
+  bool get enableOutgoingTransition;
+
   late final _OutgoingTransitionController _outgoingTransitionController;
 
-  /// Represents the route immediately below this one in the navigation stack.
-  ///
-  /// Used to communicate the sheet’s offset within this route
-  /// to the [_OutgoingTransitionController] associated with the
-  /// previous route. This is relevant when a sheet is expanded
-  /// from a minimized state via a swipe gesture, triggering the
-  /// outgoing transition of the previous route.
-  ///
-  /// If the previous route is another [_BaseCupertinoModalSheetRoute],
-  /// this is a [_CupertinoModalEntry]. Otherwise, it's a
-  /// [_NonCupertinoModalEntry], which manages its own
-  /// [_OutgoingTransitionController]. This is necessary because
-  /// there is no way to attach a controller to an existing
-  /// non-[_BaseCupertinoModalSheetRoute] route.
   _PreviousRouteEntry? _previousRouteEntry;
 
   @override
@@ -552,12 +531,14 @@ abstract class _BaseCupertinoModalSheetRoute<T> extends PageRoute<T>
   @override
   void didChangePrevious(Route<dynamic>? previousRoute) {
     super.didChangePrevious(previousRoute);
+
     _previousRouteEntry = switch (previousRoute) {
-      final _BaseCupertinoModalSheetRoute<dynamic> it => _CupertinoModalEntry(
-        it,
-      ),
+      final _BaseCupertinoModalSheetRoute<dynamic> it =>
+          _CupertinoModalEntry(it),
+
       final PageRoute<dynamic> it when !it.fullscreenDialog =>
-        _NonCupertinoModalEntry(it),
+          _NonCupertinoModalEntry(it),
+
       _ => null,
     };
   }
@@ -567,26 +548,35 @@ abstract class _BaseCupertinoModalSheetRoute<T> extends PageRoute<T>
     return nextRoute is _BaseCupertinoModalSheetRoute;
   }
 
-  /// Creates a transition builder for the non cupertino-style modal route
-  /// that is below this route.
   @override
   DelegatedTransitionBuilder? get delegatedTransition {
+    if (!enableOutgoingTransition) {
+      return null;
+    }
+
     final previousRouteEntry = _previousRouteEntry;
+
     if (previousRouteEntry is! _NonCupertinoModalEntry) {
       return null;
     }
 
     return (
-      BuildContext context,
-      Animation<double> animation,
-      Animation<double> secondaryAnimation,
-      bool allowSnapshotting,
-      Widget? child,
-    ) {
+        BuildContext context,
+        Animation<double> animation,
+        Animation<double> secondaryAnimation,
+        bool allowSnapshotting,
+        Widget? child,
+        ) {
       return _OutgoingTransition(
         animation: previousRouteEntry.outgoingTransitionController,
-        endOffset: Offset(0, MediaQuery.viewPaddingOf(context).top),
-        overlayColor: overlayColor,
+        endOffset: Offset(
+          0,
+          MediaQuery.viewPaddingOf(context).top,
+        ),
+        overlayColor: overlayColor ??
+            (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0x18ffffff)
+                : Colors.transparent),
         child: child!,
       );
     };
@@ -595,17 +585,24 @@ abstract class _BaseCupertinoModalSheetRoute<T> extends PageRoute<T>
   @nonVirtual
   @override
   Widget buildSheet(BuildContext context) {
+    final sheet = _buildSheetInternal(context);
+
     return _SheetModelObserver(
       onMetricsChanged: (metrics) {
         _previousRouteEntry?.outgoingTransitionController
             .applyNewIncomingSheetMetrics(metrics);
       },
-      child: _OutgoingTransition(
+      child: enableOutgoingTransition
+          ? _OutgoingTransition(
         animation: _outgoingTransitionController,
         endOffset: const Offset(0, -1 * _sheetTopInset),
-        overlayColor: overlayColor,
-        child: _buildSheetInternal(context),
-      ),
+        overlayColor: overlayColor ??
+            (Theme.of(context).brightness == Brightness.dark
+                ? const Color(0x18ffffff)
+                : Colors.transparent),
+        child: sheet,
+      )
+          : sheet,
     );
   }
 
@@ -616,14 +613,19 @@ abstract class _BaseCupertinoModalSheetRoute<T> extends PageRoute<T>
   Widget buildViewport(BuildContext context, Widget child) {
     final preferredTopInset =
         MediaQuery.viewPaddingOf(navigator!.context).top + _sheetTopInset;
-    return _buildViewportInternal(context, preferredTopInset, child);
+
+    return _buildViewportInternal(
+      context,
+      preferredTopInset,
+      child,
+    );
   }
 
   Widget _buildViewportInternal(
-    BuildContext context,
-    double preferredTopInset,
-    Widget child,
-  ) {
+      BuildContext context,
+      double preferredTopInset,
+      Widget child,
+      ) {
     return SheetViewport(
       padding: EdgeInsets.only(top: preferredTopInset),
       child: child,
@@ -647,15 +649,14 @@ class CupertinoModalSheetPage<T> extends Page<T> {
     this.swipeDismissSensitivity = const SwipeDismissSensitivity(),
     this.overlayColor,
     this.viewportBuilder,
+    this.enableOutgoingTransition = true,
     required this.child,
   });
 
-  /// The content to be shown in the [Route] created by this page.
   final Widget child;
 
   final CupertinoSheetViewportBuilder? viewportBuilder;
 
-  /// {@macro flutter.widgets.ModalRoute.maintainState}
   final bool maintainState;
 
   final Color? barrierColor;
@@ -672,8 +673,9 @@ class CupertinoModalSheetPage<T> extends Page<T> {
 
   final SwipeDismissSensitivity swipeDismissSensitivity;
 
-  /// {@macro cupertino._BaseCupertinoModalSheetRoute.overlayColor}
   final Color? overlayColor;
+
+  final bool enableOutgoingTransition;
 
   @override
   Route<T> createRoute(BuildContext context) {
@@ -720,26 +722,40 @@ class _PageBasedCupertinoModalSheetRoute<T>
   Color? get overlayColor => _page.overlayColor;
 
   @override
+  bool get enableOutgoingTransition =>
+      _page.enableOutgoingTransition;
+
+  @override
   String get debugLabel => '${super.debugLabel}(${_page.name})';
 
   @override
   final ModalSheetBarrierBuilder<T>? barrierBuilder;
 
   @override
-  Widget _buildSheetInternal(BuildContext context) => _page.child;
+  Widget _buildSheetInternal(BuildContext context) =>
+      _page.child;
 
   @override
   Widget _buildViewportInternal(
-    BuildContext context,
-    double preferredTopInset,
-    Widget child,
-  ) {
-    return _page.viewportBuilder?.call(context, preferredTopInset, child) ??
-        super._buildViewportInternal(context, preferredTopInset, child);
+      BuildContext context,
+      double preferredTopInset,
+      Widget child,
+      ) {
+    return _page.viewportBuilder?.call(
+      context,
+      preferredTopInset,
+      child,
+    ) ??
+        super._buildViewportInternal(
+          context,
+          preferredTopInset,
+          child,
+        );
   }
 }
 
-class CupertinoModalSheetRoute<T> extends _BaseCupertinoModalSheetRoute<T> {
+class CupertinoModalSheetRoute<T>
+    extends _BaseCupertinoModalSheetRoute<T> {
   CupertinoModalSheetRoute({
     super.settings,
     required this.builder,
@@ -753,6 +769,7 @@ class CupertinoModalSheetRoute<T> extends _BaseCupertinoModalSheetRoute<T> {
     this.transitionCurve = _incomingTransitionCurve,
     this.swipeDismissSensitivity = const SwipeDismissSensitivity(),
     this.overlayColor,
+    this.enableOutgoingTransition = true,
     this.barrierBuilder,
   });
 
@@ -788,18 +805,31 @@ class CupertinoModalSheetRoute<T> extends _BaseCupertinoModalSheetRoute<T> {
   final Color? overlayColor;
 
   @override
+  final bool enableOutgoingTransition;
+
+  @override
   final ModalSheetBarrierBuilder<T>? barrierBuilder;
 
   @override
-  Widget _buildSheetInternal(BuildContext context) => builder(context);
+  Widget _buildSheetInternal(BuildContext context) {
+    return builder(context);
+  }
 
   @override
   Widget _buildViewportInternal(
-    BuildContext context,
-    double preferredTopInset,
-    Widget child,
-  ) {
-    return viewportBuilder?.call(context, preferredTopInset, child) ??
-        super._buildViewportInternal(context, preferredTopInset, child);
+      BuildContext context,
+      double preferredTopInset,
+      Widget child,
+      ) {
+    return viewportBuilder?.call(
+      context,
+      preferredTopInset,
+      child,
+    ) ??
+        super._buildViewportInternal(
+          context,
+          preferredTopInset,
+          child,
+        );
   }
 }
