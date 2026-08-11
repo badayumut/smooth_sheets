@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:smooth_sheets/smooth_sheets.dart';
 
 import 'src/flutter_test_x.dart';
+import 'src/matchers.dart';
 import 'src/test_stateful_widget.dart';
 
 class _Boilerplate extends StatelessWidget {
@@ -364,6 +365,159 @@ void main() {
         reason: 'Should be dismissible when swipeDismissible is true',
       );
     });
+  });
+
+  group('Default modal barrier', () {
+    const barrierLabel = 'test-barrier';
+    late List<double> capturedAlphas;
+    late ModalSheetRoute<dynamic> route;
+
+    setUp(() {
+      capturedAlphas = [];
+      route = ModalSheetRoute<dynamic>(
+        barrierLabel: barrierLabel,
+        barrierColor: Color(0xFF000000), // alpha = 1.0
+        transitionDuration: Duration(milliseconds: 300),
+        swipeDismissible: true,
+        swipeDismissSensitivity: SwipeDismissSensitivity(
+          dismissalOffset: SheetOffset(0.4),
+        ),
+        builder: (_) {
+          return Sheet(
+            snapGrid: SheetSnapGrid(
+              snaps: [SheetOffset(0.5), SheetOffset(1)],
+            ),
+            child: Container(
+              key: const Key('sheet'),
+              color: Colors.white,
+              width: double.infinity,
+              height: 600,
+            ),
+          );
+        },
+      );
+    });
+
+    double? captureCurrentAlpha(WidgetTester tester) {
+      final barrier = tester
+          .widgetList<ModalBarrier>(
+            find.byWidgetPredicate(
+              (w) => w is ModalBarrier && w.semanticsLabel == barrierLabel,
+            ),
+          )
+          .firstOrNull;
+
+      final alpha = barrier?.color?.a;
+      if (alpha != null) {
+        capturedAlphas.add(alpha);
+      }
+      return alpha;
+    }
+
+    testWidgets(
+      'should fade in/out along with push/pop animation',
+      (tester) async {
+        await tester.pumpWidget(_Boilerplate(modalRoute: route));
+        await tester.tap(find.text('Open modal'));
+        await tester.pump();
+
+        for (var i = 1; i <= 10; ++i) {
+          await tester.pump(Duration(milliseconds: 30));
+          final alpha = captureCurrentAlpha(tester);
+          final expectedProgres = i / 10;
+          expect(route.animation!.value, moreOrLessEquals(expectedProgres));
+          expect(alpha, route.barrierCurve.transform(expectedProgres));
+        }
+
+        await tester.pumpAndSettle();
+        expect(capturedAlphas.last, 1);
+        expect(capturedAlphas, isMonotonicallyIncreasing);
+
+        capturedAlphas.clear();
+        route.navigator!.pop();
+
+        for (var i = 10; i >= 0; --i) {
+          await tester.pump(Duration(milliseconds: 30));
+          final alpha = captureCurrentAlpha(tester);
+          final expectedProgress = i / 10;
+          expect(route.animation!.value, moreOrLessEquals(expectedProgress));
+          expect(alpha, route.barrierCurve.transform(expectedProgress));
+        }
+
+        await tester.pumpAndSettle();
+        expect(capturedAlphas.last, 0);
+        expect(capturedAlphas, isMonotonicallyDecreasing);
+      },
+    );
+
+    testWidgets(
+      'should start fading out after swipe-to-dismiss action is triggered',
+      (tester) async {
+        await tester.pumpWidget(_Boilerplate(modalRoute: route));
+        await tester.tap(find.text('Open modal'));
+        await tester.pumpAndSettle();
+
+        capturedAlphas.clear();
+        final gesture = await tester.startDrag(
+          tester.getCenter(find.byId('sheet')),
+          AxisDirection.down,
+        );
+        await gesture.moveDownwardBy(50 - kDragSlopDefault);
+        captureCurrentAlpha(tester);
+        for (var i = 0; i < 5; ++i) {
+          await gesture.moveDownwardBy(50);
+          captureCurrentAlpha(tester);
+        }
+
+        expect(tester.getTopLeft(find.byId('sheet')).dy, 300);
+        expect(
+          capturedAlphas,
+          everyElement(1),
+          reason: 'alpha should not change before transition starts',
+        );
+
+        // Drag the sheet down further, enough to dismiss it.
+        capturedAlphas.clear();
+        for (var i = 0; i < 5; ++i) {
+          await gesture.moveDownwardBy(20);
+          await tester.pump();
+          captureCurrentAlpha(tester);
+        }
+
+        // We've dragged the minimized sheet down by 100px,
+        // which is 1/6 of the screen height.
+        expect(route.animation!.value, moreOrLessEquals(5 / 6));
+        expect(capturedAlphas.first, lessThan(1));
+        // At this point the visual sheet offset is 200px,
+        // which is 2/3 of the minimized sheet height.
+        expect(capturedAlphas.last, moreOrLessEquals(2 / 3));
+        expect(
+          capturedAlphas,
+          isMonotonicallyDecreasing,
+          reason: 'alpha should start decreasing along with transition',
+        );
+
+        capturedAlphas.clear();
+        await gesture.up();
+        await tester.pump();
+        for (var i = 1; i <= 5; ++i) {
+          await tester.pump(Duration(milliseconds: 20));
+          captureCurrentAlpha(tester);
+        }
+
+        // Although it's still in the middle of the transition,
+        // the sheet is no longer visible, and neither is the barrier.
+        expect(route.animation!.value, moreOrLessEquals(0.5));
+        expect(capturedAlphas.last, moreOrLessEquals(0));
+
+        await tester.pumpAndSettle();
+
+        expect(find.byId('sheet'), findsNothing);
+        expect(capturedAlphas.first, lessThan(2 / 3));
+        expect(capturedAlphas.last, moreOrLessEquals(0));
+        expect(capturedAlphas, isMonotonicallyDecreasing);
+      },
+    );
   });
 
   // Regression test for https://github.com/fujidaiti/smooth_sheets/issues/233
@@ -1111,4 +1265,193 @@ void main() {
       await tester.pumpAndSettle();
     });
   });
+
+  group(
+    'SheetVisibilityNotifier',
+    () {
+      (Widget, ModalSheetRoute<dynamic>) boilerplate({
+        bool dismissible = true,
+        SheetSnapGrid snaps = const SheetSnapGrid.single(
+          snap: SheetOffset(1),
+        ),
+      }) {
+        final route = ModalSheetRoute<dynamic>(
+          swipeDismissible: dismissible,
+          swipeDismissSensitivity: SwipeDismissSensitivity(
+            dismissalOffset: SheetOffset(0.3),
+          ),
+          builder: (context) {
+            return Sheet(
+              snapGrid: snaps,
+              initialOffset: SheetOffset(1),
+              physics: BouncingSheetPhysics(),
+              child: Container(
+                key: const Key('sheet'),
+                color: Colors.white,
+                width: double.infinity,
+                height: 500,
+              ),
+            );
+          },
+        );
+
+        return (_Boilerplate(modalRoute: route), route);
+      }
+
+      testWidgets('should update visibility along with sheet position', (
+        tester,
+      ) async {
+        final (testWidget, route) = boilerplate(
+          dismissible: false,
+          snaps: SheetSnapGrid(
+            snaps: [SheetOffset(0), SheetOffset(0.5), SheetOffset(1)],
+          ),
+        );
+
+        await tester.pumpWidget(testWidget);
+        await tester.tap(find.text('Open modal'));
+        await tester.pumpAndSettle();
+
+        expect(
+          tester.getRect(find.byId('sheet')),
+          Rect.fromLTWH(0, 100, 800, 500),
+          reason: 'sheet should be fully visible',
+        );
+        expect(route.sheetVisibility.value, 1);
+
+        await tester.dragUpward(find.byId('sheet'), deltaY: 50);
+        await tester.pump();
+
+        expect(tester.getTopLeft(find.byId('sheet')).dy, lessThan(100));
+        expect(
+          route.sheetVisibility.value,
+          1,
+          reason: 'visibility should never exceeds 1',
+        );
+
+        await tester.fling(find.byId('sheet'), Offset(0, 60), 1000);
+        await tester.pumpAndSettle();
+
+        expect(
+          tester.getRect(find.byId('sheet')),
+          Rect.fromLTWH(0, 350, 800, 500),
+          reason: 'sheet should rest at mid-snap point',
+        );
+        expect(route.sheetVisibility.value, 0.5);
+
+        await tester.flingFrom(
+          tester.getRect(find.byId('sheet')).topCenter + Offset(0, 50),
+          Offset(0, 60),
+          1000,
+        );
+        await tester.pumpAndSettle();
+
+        expect(
+          tester.getRect(find.byId('sheet')),
+          Rect.fromLTWH(0, 600, 800, 500),
+          reason: 'entire sheet should be outside viewport',
+        );
+        expect(route.sheetVisibility.value, 0.0);
+      });
+
+      testWidgets(
+        'should notify listeners of visibility during push/pop animations',
+        (tester) async {
+          final (testWidget, route) = boilerplate();
+
+          await tester.pumpWidget(testWidget);
+          await tester.tap(find.text('Open modal'));
+          await tester.pump();
+
+          final notifiedValues = [route.sheetVisibility.value];
+          route.sheetVisibility.addListener(() {
+            notifiedValues.add(route.sheetVisibility.value);
+          });
+          await tester.pumpAndSettle(Duration(milliseconds: 16));
+
+          expect(notifiedValues.first, 0);
+          expect(notifiedValues.last, 1);
+          expect(notifiedValues, isMonotonicallyIncreasing);
+
+          notifiedValues.clear();
+          route.navigator!.pop();
+          await tester.pumpAndSettle();
+
+          expect(notifiedValues.first, greaterThan(0.98));
+          expect(notifiedValues.last, 0);
+          expect(notifiedValues, isMonotonicallyDecreasing);
+        },
+      );
+
+      testWidgets(
+        'should notify listeners of visibility during swipe-to-dismiss gesture',
+        (tester) async {
+          final (testWidget, route) = boilerplate();
+
+          await tester.pumpWidget(testWidget);
+          await tester.tap(find.text('Open modal'));
+          await tester.pumpAndSettle();
+
+          final gesture = await tester.startDrag(
+            tester.getCenter(find.byId('sheet')),
+            AxisDirection.down,
+          );
+          await gesture.moveDownwardBy(50 - kDragSlopDefault);
+          await tester.pump();
+          expect(route.sheetVisibility.value, moreOrLessEquals(0.9));
+
+          await gesture.moveDownwardBy(50);
+          await tester.pump();
+          expect(route.sheetVisibility.value, moreOrLessEquals(0.8));
+
+          await gesture.moveDownwardBy(50);
+          await tester.pump();
+          expect(route.sheetVisibility.value, moreOrLessEquals(0.7));
+
+          await gesture.moveDownwardBy(50);
+          await tester.pump();
+          expect(route.sheetVisibility.value, moreOrLessEquals(0.6));
+
+          await gesture.moveDownwardBy(50);
+          await tester.pump();
+          expect(route.sheetVisibility.value, moreOrLessEquals(0.5));
+
+          await gesture.moveDownwardBy(50);
+          await tester.pump();
+          expect(route.sheetVisibility.value, moreOrLessEquals(0.4));
+
+          await gesture.moveDownwardBy(50);
+          await tester.pump();
+          expect(route.sheetVisibility.value, moreOrLessEquals(0.3));
+
+          await gesture.moveDownwardBy(50);
+          await tester.pump();
+          expect(route.sheetVisibility.value, moreOrLessEquals(0.2));
+          expect(
+            tester.getTopLeft(find.byId('sheet')).dy,
+            moreOrLessEquals(500),
+            reason: 'sheet should exceed dismissal offset',
+          );
+
+          final notifiedValues = <double>[];
+          route.sheetVisibility.addListener(() {
+            notifiedValues.add(route.sheetVisibility.value);
+          });
+          await gesture.up();
+          // Use a shorter interval than the default so that the intermediate
+          // frames of the dismissing animation are captured.
+          await tester.pumpAndSettle(const Duration(milliseconds: 16));
+
+          expect(find.byId('sheet'), findsNothing);
+          expect(notifiedValues.first, lessThan(0.2));
+          expect(notifiedValues.last, 0);
+          expect(
+            notifiedValues,
+            isMonotonicallyDecreasing,
+            reason: 'visibility should keep being updated after the release',
+          );
+        },
+      );
+    },
+  );
 }

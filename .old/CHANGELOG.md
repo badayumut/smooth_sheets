@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.1.0 - 2026-08-02
+- feat: Add ModalSheetRouteMixin.sheetVisibility to observe how much of a sheet is visible in a modal route ([#576](https://github.com/fujidaiti/smooth_sheets/pull/576)) - [d8b826b](https://github.com/fujidaiti/smooth_sheets/commit/d8b826bee73eb637a3da041c7d00ec5040fd5504)
+- fix: Modal barrier fade too subtle for small sheets ([#577](https://github.com/fujidaiti/smooth_sheets/pull/577)) - [473daa9](https://github.com/fujidaiti/smooth_sheets/commit/473daa966fef628e005037ea144f549602742bb1)
+- fix: Null check operator error in _LazySheetModelView.setModel due to uninitialized old model offset ([#571](https://github.com/fujidaiti/smooth_sheets/pull/571)) - [bbdc96c](https://github.com/fujidaiti/smooth_sheets/commit/bbdc96c102677937d838a6a7541304b9e842b154)
+
+
+See [the release note](https://github.com/fujidaiti/smooth_sheets/releases/tag/v1.1.0) for more details.
+
+## 1.0.3 - 2026-06-21
+- fix: Assertion error in SheetContentScaffold when height is zero ([#558](https://github.com/fujidaiti/smooth_sheets/pull/558)) - [ba7bd77](https://github.com/fujidaiti/smooth_sheets/commit/ba7bd775cd0d39c89a18ec50e58feaf78c30669c)
+
+
+See [the release note](https://github.com/fujidaiti/smooth_sheets/releases/tag/v1.0.3) for more details.
+
+## 1.0.2 - 2026-04-22
+- fix: False positive layout overflow assertion ([#545](https://github.com/fujidaiti/smooth_sheets/pull/545)) - [a1b2d03](https://github.com/fujidaiti/smooth_sheets/commit/a1b2d03dae33a1c71bb1c8c7128668ecb0299311)
+
+
+See [the release note](https://github.com/fujidaiti/smooth_sheets/releases/tag/v1.0.2) for more details.
+
 ## 1.0.1 - 2026-04-21
 - fix: Avoid constraint violation and report layout overflow in SheetContentScaffold ([#539](https://github.com/fujidaiti/smooth_sheets/pull/539)) - [488b569](https://github.com/fujidaiti/smooth_sheets/commit/488b569d0587bc7633e8b7cdb010d19b19aa5b98)
 

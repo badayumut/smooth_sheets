@@ -7,7 +7,7 @@ import 'package:meta/meta.dart';
 import 'drag.dart';
 import 'gesture_proxy.dart';
 import 'internal/float_comp.dart';
-import 'model.dart' show SheetOffset;
+import 'model.dart';
 import 'viewport.dart';
 
 const _minReleasedPageForwardAnimationTime = 300; // Milliseconds.
@@ -228,6 +228,53 @@ mixin ModalSheetRouteMixin<T> on ModalRoute<T> {
       ? Curves.linear
       : transitionCurve;
 
+  /// Reports how much of a modal sheet is currently visible on the viewport.
+  ///
+  /// The [Animation.value] is the fraction (from 0 to 1, inclusively) of
+  /// the sheet's height that lies within the viewport, for example:
+  ///
+  /// - `0`: the sheet is entirely outside the viewport.
+  /// - `0.5`: the upper half is visible; the rest is below the viewport.
+  /// - `1`: the entire sheet is within the viewport.
+  ///
+  /// It reflects both the route's transition animation (the push and
+  /// pop animations, and the swipe-to-dismiss gesture) and the sheet's own
+  /// position within the viewport (for example, dragging between snap points).
+  ///
+  /// A typical use is to tie the modal barrier built by
+  /// [ModalSheetRoute.barrierBuilder] to the sheet, so that the barrier fades
+  /// out as the user drags the sheet down:
+  ///
+  /// ```dart
+  /// ModalSheetRoute<void>(
+  ///   builder: (context) => Sheet(child: ...),
+  ///   barrierBuilder: (route, onDismiss) {
+  ///     final visibility =
+  ///         (route as ModalSheetRouteMixin<void>).sheetVisibility;
+  ///     return AnimatedModalBarrier(
+  ///       onDismiss: onDismiss,
+  ///       color: visibility.drive(
+  ///         ColorTween(begin: Colors.transparent, end: Colors.black54),
+  ///       ),
+  ///     );
+  ///   },
+  /// );
+  /// ```
+  Animation<double> get sheetVisibility => _sheetVisibility;
+  late final _SheetVisibilityNotifier _sheetVisibility;
+
+  @override
+  void install() {
+    super.install();
+    _sheetVisibility = _SheetVisibilityNotifier();
+  }
+
+  @override
+  void dispose() {
+    _sheetVisibility.dispose();
+    super.dispose();
+  }
+
   Widget buildSheet(BuildContext context);
 
   Widget buildViewport(BuildContext context, Widget child) {
@@ -242,10 +289,13 @@ mixin ModalSheetRouteMixin<T> on ModalRoute<T> {
   ) {
     return buildViewport(
       context,
-      _SheetDismissible(
-        enabled: swipeDismissible,
-        sensitivity: swipeDismissSensitivity,
-        child: buildSheet(context),
+      _SheetVisibilityObserver(
+        route: this,
+        child: _SheetDismissible(
+          enabled: swipeDismissible,
+          sensitivity: swipeDismissSensitivity,
+          child: buildSheet(context),
+        ),
       ),
     );
   }
@@ -286,11 +336,12 @@ mixin ModalSheetRouteMixin<T> on ModalRoute<T> {
         dismissible: barrierDismissible,
         semanticsLabel: barrierLabel,
         barrierSemanticsDismissible: semanticsDismissible,
-        color: animation!.drive(
-          ColorTween(
-            begin: barrierColor.withValues(alpha: 0.0),
-            end: barrierColor,
-          ).chain(CurveTween(curve: barrierCurve)),
+        color: _DefaultModalBarrierColorAnimation(
+          transitionProgress: animation!,
+          userGestureInProgress: () => navigator!.userGestureInProgress,
+          sheetVisibility: _sheetVisibility,
+          curve: barrierCurve,
+          color: barrierColor,
         ),
       );
     } else {
@@ -814,5 +865,165 @@ class _SheetPopScopeState<T> extends State<SheetPopScope<T>> {
       onPopInvokedWithResult: widget.onPopInvokedWithResult,
       child: widget.child,
     );
+  }
+}
+
+class _SheetVisibilityNotifier extends Animation<double> with ChangeNotifier {
+  /// The fraction of the sheet's height that is visible in the viewport,
+  /// ranging from 0 (entirely hidden) to 1 (entirely visible).
+  @override
+  double get value => _visibility;
+  double _visibility = 0;
+
+  /// Visibility threshold under which the swipe-to-dismiss action is triggered.
+  double get swipeToDismissThreshold => _threshold;
+  double _threshold = 1;
+
+  void _updateVisibility(double visibility) {
+    if (visibility != _visibility) {
+      _visibility = visibility;
+      notifyListeners();
+    }
+  }
+
+  void didChangeVisualSheetPosition(
+    SheetMetrics metrics,
+    double transitionProgress,
+  ) {
+    final sheetHeight = metrics.size.height;
+    if (sheetHeight <= 0) {
+      _threshold = 1;
+      _updateVisibility(0);
+      return;
+    }
+    // The route transition slides the entire viewport, and thus the sheet,
+    // downward by this amount.
+    final viewportHeight = metrics.viewportSize.height;
+    final translation = (1 - transitionProgress) * viewportHeight;
+    final sheetTop = (viewportHeight - metrics.offset) + translation;
+    _threshold = (metrics.minOffset / sheetHeight).clamp(0.0, 1.0);
+    _updateVisibility(
+      ((viewportHeight - sheetTop) / sheetHeight).clamp(0.0, 1.0),
+    );
+  }
+
+  /// Always [AnimationStatus.forward], regardless of the direction in which
+  /// the [value] is changing.
+  @override
+  AnimationStatus get status => AnimationStatus.forward;
+
+  @override
+  void addStatusListener(AnimationStatusListener listener) {
+    // status will never change.
+  }
+
+  @override
+  void removeStatusListener(AnimationStatusListener listener) {
+    // status will never change.
+  }
+}
+
+class _SheetVisibilityObserver extends StatefulWidget {
+  const _SheetVisibilityObserver({required this.route, required this.child});
+
+  final ModalSheetRouteMixin<dynamic> route;
+  final Widget child;
+
+  @override
+  State<_SheetVisibilityObserver> createState() =>
+      _SheetVisibilityObserverState();
+}
+
+class _SheetVisibilityObserverState extends State<_SheetVisibilityObserver> {
+  Animation<double> get _transition => widget.route.animation!;
+
+  SheetModelView? _model;
+
+  @override
+  void initState() {
+    super.initState();
+    _transition.addListener(_invalidateVisibility);
+  }
+
+  @override
+  void dispose() {
+    _transition.removeListener(_invalidateVisibility);
+    _model?.removeListener(_invalidateVisibility);
+    super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final model = SheetViewportState.of(context)!.model;
+    _model?.removeListener(_invalidateVisibility);
+    _model = model..addListener(_invalidateVisibility);
+    _invalidateVisibility();
+  }
+
+  void _invalidateVisibility() {
+    final model = _model;
+    if (model != null && model.hasMetrics && !widget.route.offstage) {
+      widget.route._sheetVisibility.didChangeVisualSheetPosition(
+        model,
+        widget.route.effectiveCurve.transform(_transition.value),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
+  }
+}
+
+class _DefaultModalBarrierColorAnimation extends Animation<Color> {
+  _DefaultModalBarrierColorAnimation({
+    required this.transitionProgress,
+    required this.userGestureInProgress,
+    required this.sheetVisibility,
+    required this.curve,
+    required this.color,
+  }) : _transparentColor = color.withAlpha(0);
+
+  final Animation<double> transitionProgress;
+  final ValueGetter<bool> userGestureInProgress;
+  final _SheetVisibilityNotifier sheetVisibility;
+  final Curve curve;
+  final Color color;
+  final Color _transparentColor;
+
+  @override
+  void addListener(VoidCallback listener) =>
+      transitionProgress.addListener(listener);
+
+  @override
+  void removeListener(VoidCallback listener) =>
+      transitionProgress.removeListener(listener);
+
+  @override
+  void addStatusListener(AnimationStatusListener listener) =>
+      transitionProgress.addStatusListener(listener);
+
+  @override
+  void removeStatusListener(AnimationStatusListener listener) =>
+      transitionProgress.removeStatusListener(listener);
+
+  @override
+  AnimationStatus get status => transitionProgress.status;
+
+  @override
+  Color get value {
+    double opacity;
+    if (userGestureInProgress()) {
+      opacity = sheetVisibility.value;
+      if (sheetVisibility.swipeToDismissThreshold case final t when t > 0) {
+        opacity = (opacity / t).clamp(0.0, 1.0);
+      }
+    } else {
+      opacity = curve.transform(transitionProgress.value);
+    }
+
+    return Color.lerp(_transparentColor, color, opacity)!;
   }
 }
